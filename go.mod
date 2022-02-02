@@ -6,6 +6,7 @@ require (
 	github.com/ethereum/go-ethereum v1.10.15
 	github.com/libp2p/go-libp2p-core v0.14.0
 	github.com/protolambda/ask v0.1.3
+	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1
 )
 
 require (

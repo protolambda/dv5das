@@ -103,7 +103,7 @@ Some ideas to create these properties:
 Does this sound familiar? Discv5 solves a very similar problem!
 
 What discv5 offers:
-- The node tables can be huge (up to 4096 records) and the network is not that much larger (rough estimate: 10k validating nodes).
+- The node tables can be large (16 x 16 = 256 records, plus replacements queue) and the network is not that much larger (rough estimate: 10k validating nodes, = approx 40 times the size).
   Number of hops will be low if some type of DHT search even works only a little bit.
 - Only UDP communication: effective with resource to keep that many peers.
 - Information distribution is similar: every record has a tiny signature to authenticate the data. Samples have a tiny proof to verify.
