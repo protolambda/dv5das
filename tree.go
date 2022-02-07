@@ -4,18 +4,18 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
-type Content interface {
+type TreeNode interface {
 	Depth() uint
 	ID() enode.ID
 	Score() float64
 	SubtreeSize() uint
 	// Add a node to the tree, return updated tree root, and ok == true if the node didn't already exist
-	Add(n *enode.Node) (updated Content, ok bool)
+	Add(n *enode.Node) (updated TreeNode, ok bool)
 	// Search for closest leaf nodes (log distance) and append to out,
 	// maximum to the capacity of the out slice
-	Search(target enode.ID, out []Content) []Content
+	Search(target enode.ID, out []TreeNode) []TreeNode
 	// Weakest finds the content with the weakest score at given tree depth
-	Weakest(depth uint) Content
+	Weakest(depth uint) TreeNode
 }
 
 type LeafNode struct {
@@ -55,7 +55,7 @@ func (*LeafNode) SubtreeSize() uint {
 	return 1
 }
 
-func (leaf *LeafNode) Add(other *enode.Node) (updated Content, ok bool) {
+func (leaf *LeafNode) Add(other *enode.Node) (updated TreeNode, ok bool) {
 	if leaf.ID() == other.ID() {
 		return leaf, false
 	}
@@ -65,14 +65,14 @@ func (leaf *LeafNode) Add(other *enode.Node) (updated Content, ok bool) {
 	return pair, true
 }
 
-func (leaf *LeafNode) Search(target enode.ID, out []Content) []Content {
+func (leaf *LeafNode) Search(target enode.ID, out []TreeNode) []TreeNode {
 	if len(out) == cap(out) {
 		return out
 	}
 	return append(out, leaf)
 }
 
-func (leaf *LeafNode) Weakest(depth uint) Content {
+func (leaf *LeafNode) Weakest(depth uint) TreeNode {
 	return leaf
 }
 
@@ -87,9 +87,9 @@ type PairNode struct {
 	// left and right are never nil at the same time
 
 	// May be nil (pair node as extension node)
-	left Content
+	left TreeNode
 	// May be nil (pair node as extension node)
-	right Content
+	right TreeNode
 }
 
 func (pair *PairNode) Depth() uint {
@@ -108,7 +108,7 @@ func (pair *PairNode) SubtreeSize() uint {
 	return pair.subtreeSize
 }
 
-func (pair *PairNode) Add(n *enode.Node) (updated Content, ok bool) {
+func (pair *PairNode) Add(n *enode.Node) (updated TreeNode, ok bool) {
 	if pair.ID() == n.ID() {
 		return pair, false
 	}
@@ -148,7 +148,7 @@ func (pair *PairNode) Add(n *enode.Node) (updated Content, ok bool) {
 	return pair, ok
 }
 
-func (pair *PairNode) Search(target enode.ID, out []Content) []Content {
+func (pair *PairNode) Search(target enode.ID, out []TreeNode) []TreeNode {
 	if len(out) == cap(out) {
 		return out
 	}
@@ -173,7 +173,7 @@ func (pair *PairNode) Search(target enode.ID, out []Content) []Content {
 	}
 }
 
-func (pair *PairNode) Weakest(depth uint) Content {
+func (pair *PairNode) Weakest(depth uint) TreeNode {
 	if depth > pair.depth {
 		if pair.left == nil || (pair.right.Score() > pair.left.Score()) {
 			return pair.right.Weakest(depth)

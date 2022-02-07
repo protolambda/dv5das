@@ -28,6 +28,8 @@ type NodeCmd struct {
 	log log.Logger
 	dv5 *discover.UDPv5
 	srv *http.Server
+
+	dasTree TreeNode
 }
 
 func (nc *NodeCmd) Help() string {
@@ -120,6 +122,18 @@ func (nc *NodeCmd) Run(ctx context.Context, args ...string) error {
 		return err
 	}
 	nc.dv5 = udpV5
+
+	// init tree with our own identity (TODO: persist tree on disk for later retrieval on restart)
+	nc.dasTree = &LeafNode{depth: 0, score: 0, self: localNode.Node()}
+
+	// TODO: start tree balancing work
+
+	// TODO: start sample request work
+
+	// TODO: data-blobs source, publish canonical KZG commitments somewhere (gossipsub?)
+
+	// TODO: seed samples
+
 	udpV5.RegisterTalkHandler("das", nc.OnDasRequest)
 
 	return nil
@@ -127,7 +141,9 @@ func (nc *NodeCmd) Run(ctx context.Context, args ...string) error {
 
 //  OnDasRequest implements discover.RegisterTalkHandler
 func (nc *NodeCmd) OnDasRequest(id enode.ID, addr *net.UDPAddr, bytes []byte) []byte {
-	// TODO
+	// TODO handle request types:
+	//  - bundle to split and relay in sub-bundles
+	//  - sample request
 	return nil
 }
 
