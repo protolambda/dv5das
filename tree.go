@@ -59,7 +59,7 @@ func (leaf *LeafNode) Add(other *enode.Node) (updated Content, ok bool) {
 	if leaf.ID() == other.ID() {
 		return leaf, false
 	}
-	pair := &PairNode{depth: leaf.depth, score: leaf.score, subtreeSize: 0, id: clip(leaf.ID(), leaf.depth)}
+	pair := &PairNode{depth: leaf.depth, score: 0, subtreeSize: 0, id: clip(leaf.ID(), leaf.depth)}
 	_, _ = pair.Add(leaf.self)
 	_, _ = pair.Add(other)
 	return pair, true
@@ -83,6 +83,8 @@ type PairNode struct {
 
 	// Bits after depth index are zeroed
 	id enode.ID
+
+	// left and right are never nil at the same time
 
 	// May be nil (pair node as extension node)
 	left Content
@@ -116,7 +118,7 @@ func (pair *PairNode) Add(n *enode.Node) (updated Content, ok bool) {
 		} else {
 			pair.right = &LeafNode{
 				depth: pair.depth + 1,
-				score: 0, // TODO
+				score: 0,
 				self:  n,
 			}
 			ok = true
@@ -135,6 +137,13 @@ func (pair *PairNode) Add(n *enode.Node) (updated Content, ok bool) {
 	}
 	if ok {
 		pair.subtreeSize += 1
+		pair.score = 0
+		if pair.left != nil {
+			pair.score += pair.left.Score()
+		}
+		if pair.right != nil {
+			pair.score += pair.right.Score()
+		}
 	}
 	return pair, ok
 }
@@ -169,7 +178,7 @@ func (pair *PairNode) Weakest(depth uint) Content {
 		if pair.left == nil || (pair.right.Score() > pair.left.Score()) {
 			return pair.right.Weakest(depth)
 		}
-		return pair.left
+		return pair.left.Weakest(depth)
 	}
 	return pair
 }

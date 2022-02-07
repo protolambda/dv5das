@@ -55,30 +55,12 @@ We formed a small working-group, and more ports, based on the Python and Go code
 - [Constantine (research code)](https://github.com/mratsim/constantine/tree/master/research/kzg_poly_commit), KZG FFTs and proofs ported to Nim by Mamy Ratsimbazafy (Nimbus team).
 - [KZG in rust](https://github.com/sifraitech/kzg), Rust port by students of Saulius Grigaitis / SIFRAI-tech (Grandine team).
 
-## Facing p2p network, again
+## Revisiting the DAS network problem
 
-Theory and crypto-libs are there, but now back to the networking problem.
+Theory and crypto-libs are there, and the Merge is almost here (Catalyst, Rayonism, Amphora, Kintsugi, Kiln), now back to the networking problem.
 
-Network challenges:
-- No on-chain incentives in DAS. Unlike with attestations and proof of custody.
-- Network and consensus validator identities are strictly separated because of privacy and redundancy:
-  everyone can setup their validators however, wherever and act however they like.
-- A huge amount of data to distribute, randomly access, and continuously update
-- Randomness to maintain, vulnerable to DoS/bribes/etc. if sampling can be predicted and/or influenced.
-- Organization to maintain, to distribute data more efficiently than literally propagating it to all participants
-
-Challenging problem! But then hits the question: do you prioritize something that can have a similar impact, but is solvable faster?
-Persisting means a back-and-forth between burn-out and bad ideas, work without a scope and impact is more often a distraction.
-
-So then I focused on the Merge, the Rayonism merge devnets, sharding-spec updates (shard blobs, PBS with 64 shards, etc.), open rollup tech, the Amphora merge devnet, and then full-time Optimism.
-
-You have to keep going, build other things when you can: ethereum is scaling because of pressures on usage, not just research.
-
-## Revisiting Data-availability 
-
-Optimism <3 data-availability: this is the most fundamental scaling problem rollups face. Time to revisit the problem!
-
-The protocol has two independent identity layers:
+The protocol has two independent identity layers, because of privacy and redundancy:
+(everyone can setup their validators however, wherever and act however they like):
 - consensus layer (validator entities signing stuff)
 - network layer (nodes hosting validators)
 
@@ -86,7 +68,7 @@ To the consensus layer, DAS *only* needs to be accurate. The data that *is* avai
 
 The network layer serves the above, requiring:
 - Fast sample responses (keep accuracy for best case)
-- Resilience (keep accuracy for worst case, e.g. DoS attacks)
+- Resilience (keep accuracy for worst case, e.g. DoS attacks and maintain randomness for security)
 - Low resources (keep accuracy for lazy case, no excuses not to run it)
 
 Also note that data-availability only requires data to be published to anyone unconditionally, 
@@ -94,7 +76,7 @@ not to persist it forever (incentivized honest nodes can keep storing it, as lon
 
 Some ideas to create these properties:
 - Reduce the number of hops for fast samples queries, and saving resources
-- No small meshes, to preserve sample randomness 
+- No small meshes as requester, to preserve sample randomness 
 - Distribute the samples as much as possible, the uniform random sampling will load-balance the work
 - Distributing helps offload privacy/DoS risk from data publishers
 - Reduce the overhead per sample as much as possible, to save resources
@@ -124,12 +106,27 @@ But how does it fit discv5?
 Discv5 offers `TALKREQ`/`TALKRESP` to extend the protocol with application-layer messaging.
 Not all discv5 implementations support this yet, but it is part of the spec and we can start with it in Go.
 
-There are two steps in sampling with a DHT:
-1. Seed the DHT with samples as publisher
-2. Query the DHT for samples as searcher
+Although the `TALKREQ`/`TALKRESP` are intended for initial handshakes / negotiation of extensions,
+the communication in this protocol is infrequent and simple enough that `TALKREQ`/`TALKRESP` should work fine
+(open for suggestions however).
 
-And a simple DHT hash function: `H(sample_id) -> node_id`. The `sample_id` may be a combination of index, block height,
-and maybe beacon history or randomness (to avoid indefinite pre-mining data contents that skew all the samples to unfortunate DHT spots).
+The primary roles in the DHT are:
+1. Seed the DHT with sample bundles as publisher
+2. Fan-out the bundles as relayer
+3. Query the DHT for samples as searcher
+4. Respond to queries as host
+
+And the samples all get hashed to an ID in the DHT: `H(fork_digest, randao_mix, data_id, sample_index) -> node_id`:
+- `fork_digest` (`f`) - Bytes4, fork digest to separate networks
+- `randao_mix` (`r`) - Bytes32, is randomness picked based on the sample time: this prevents mining of node identities close to a specific sample far in the future
+- `data_id` (`x`) - Bytes48, is the KZG commitment of the data: samples are unique to the data they are part of
+- `sample_index` (`i`) - uint64 (little endian), identifies the sample
+
+The `fork_digest` and `randao_mix` can be determined based on time (slot `t`), and are not communicated or stored in the sample protocol.
+
+Samples are stored in a key-value store.
+Key: `t,x,i`  (`f` and `r` are determined based on slot `t`)
+Value: sample data points and proof
 
 #### Seeding
 
@@ -138,10 +135,10 @@ Generally we are not worried about the cost of the publisher as much:
 
 Before publishing the data, nodes should have the expected KZG commitment to all of it (proposer signed KZG commitment from builder on global topic).
 
-The builder then generates the samples `0,...,N`, hashes them to their DHT location `H(0),...,H(N)`, and sends them there (`N` UDP messages)
+The builder then generates the samples `0,...,N` and hashes them to their DHT location `H(f,r,x,0),...,H(f,r,x,N)`, and distributes them in bundles (see )
 
 Each node that receives a sample can verify the sample proof against the global KZG commitment,
-and limit spam by testing if the message is close enough to their identity.
+and limit spam by e.g. testing if the message is close enough to their identity.
 
 Nodes that receive the samples can propagate them further to other nodes in the DHT radius of the sample: some redundancy is balances load and speeds up search.
 
@@ -151,24 +148,11 @@ Sybil attacks to capture the first distributed samples may be a problem, but a b
 
 Each node (validating or not) can verify if data is available by making `k` random sample requests (`xs = [rand_range(0, N) for i in range(k)]`).
 
-To request, the sample identity `x` is hashed to a node identity `H(x)`. If the overlay has nearby nodes, then these are queried for the sample.
-If not, then use regular discv5 search to find a node closer to `H(x)`.
+To request, the sample identity is hashed to a node identity `H(f,r,x,i)`. If the overlay has nearby nodes, then these are queried for the sample.
+If not, then use regular discv5 search to find a node closer to `H(f,r,x,i)`.
 
 
-### Sample management
-
-Although samples are tiny and distributed evenly, there is still a cost to holding them.
-So we need to prune old samples (don't blow up memory), as well as gate new samples (guard against spam).
-
-To prune and gate effectively, we need some context:
-- peer score: do we trust the origin of this sample?
-- saturation score: did many other peers see this sample?
-- popularity score: did other peers request this sample often?
-- responsibility score: how many times have other peers pushed this sample to us? (weight by peer score)
-- sample time: at some point samples are too old
-- randomness: attackers may try to beat the metrics, but it is much harder to beat occasional randomness
-
-#### Peer score
+### Peer score
 
 Detected good/bad sample behaviors feed back to a scoring table of peers.
 
@@ -187,96 +171,114 @@ Think of:
 - good: Stays consistently within sample rate limits
 - very good: First to seed the sample to us
 
-#### Saturation score
+### Sample Pruning
 
-`saturation = seeders of sample / queries until sample found`
+Samples are dropped after some locally configured expiry time.
+Aggressive pruning may negatively affect the DAS peer score perceived by other nodes.
 
-Samples with a higher saturation score can be preferred to drop, others will still be serving the sample.
-
-#### Popularity score
-
-`popularity = request count over rolling time window`
-
-Some space should be allocated to retain the most popular samples: we may be the last serving them to the net.
-If a popularity score is too high, the node can attempt to ralay the popular samples to others nearby,
-to saturate the radius and distribute the response work.
-
-Not all space is allocated, in case the popularity is faked (their peer scores should be negatively affected however).
-
-#### Responsibility score
-
-`responsibility = peer-score weighted avg. of push count of a sample`
-
-If the other metrics check out, then allocate some space specifically for samples that other peers are giving us.
-
-#### Pruning
-
-Samples are stored in a priority-queue. Priorities are periodically updated, based on the scores and sample time.
-The lowest priority items are first to be pruned.
-
-#### Gating
+### Sample Gating
 
 Samples pushed to the node by other peers are ignored, penalized, queued or accepted based on validation:
 - Is the pushing peer banned? ignore.
-- Do we not have the commitment? queue.
+- Do we not have the commitment? queue with timeout.
 - Is the proof invalid? penalize.
 
-Otherwise accept, and update the metrics of both the pushing peer and the sample itself.
+Otherwise follow the sample distribution validation rules.
 
 ### Overlay
 
 Since discv5 is also including non-ethereum nodes (IoT, alt networks, testnets, pretty much everything),
-we need to filter down which nodes participate: an overlay.
+we need to filter down to just the nodes that participate: an overlay.
 
 The discv5 overlay requires:
+- No changes to discv5
 - A `das` key-value pair in the node records. Used to filter between different DAS overlays. Absent for non-DAS nodes.
-- Maintaining a nodes-table similar to the regular table, but filtered to only accept records with correct `das` entry
-  - Possibly we can piggyback on the node revalidation of the regular table, to reduce cost of maintaining the overlay.
+- Maintain more node records than a regular discv5 table
+- Quick lookups of records close to any identity: DHT-search is the backup, not the default
+- Ensure records are balanced and scored: an empty or poor-behaving sub-set in the DHT should be repaired with new records
 
+#### Tree
 
+Discv5 uses a XOR log distance: the more bits between two identities match, the closer they are together.
 
-### Parameters scratchpad
+To find nodes for retrieval of samples, the overlay collection of records can be represented as binary tree:
+- Each ID bit directs to the left or right sub-tree.
+- Pair nodes can have empty left or right trees if there are no records
+- Leaf nodes can be represented with extension bits (avoid many half-empty pair nodes)
 
-Work in progress, figuring out the parameters of the network.
+Discv5 is extended, not modified: when a sub-tree is too small for reliable results, or when the nodes are misbehaving,
+discv5 is used to find new nodes in the sub-tree that can serve samples.
+This functions as a fallback during sampling, or as tree balancing during idle time.
 
-```python
-sample_overhead = 70  # bytes   # proof, encoding, etc.
-points_per_sample = 8
-sample_content_size = 32*points_per_sample  # bytes       # data contents only
+#### Tree balancing
 
-data_blob_size = 512 * 1024  # bytes
-data_blob_interval = 12  # seconds
-sample_requests_per_blob = 30   # number of samples a single node should do per blob    # TODO old num from V
-node_count = 10_000
-avg_peers_per_node = 2000
-
-sample_size = sample_overhead + sample_content_size
-
-data_avail_througput = data_blob_size / data_blob_interval
-sample_count_per_blob = data_blob_size / sample_content_size
-sample_throughput = sample_count_per_blob / data_blob_interval   # samples / second (on chain, unextended)
-outgoing_requests_rate = sample_requests_per_blob / data_blob_interval   # sample requests / second (single node)
-
-outgoing_bandwidth = outgoing_requests_rate * sample_size   # incoming is expected to be the same (ignoring search overhead)
-
-# data recovery by extending the data 2x for redundancy
-extended_sample_throughput = sample_throughput * 2   # samples / second (on network, extended)
-
-total_requests_rate = outgoing_requests_rate * node_count   # sample requests / second (all nodes combined)
-avg_queries_per_sample = total_requests_rate / extended_sample_throughput  # sample requests / sample
-
-# need to hide 50% for samples to not be recoverable
-attack_hiding_factor = 0.50
-# individual nodes may get adaptive answers on queries, we can only count on honest nodes.
-# (we assume validators are evenly distributed between nodes here)
-validating_nodes_ratio = 2.0 / 3.0
-
-validating_nodes = node_count * validating_nodes_ratio
-
-# TODO: implement monte carlo experiment to approximate sampling security (tricky by formula, because each node makes k distinct random requests, but nodes are otherwise randomly overlapping)
-# Probability that a builder cannot answer to any 51% of the samples should be minimal. `k` can be adjusted, and the expected minimum honest node count requesting samples must be determined.
-
-
+The scores of sub-trees add up:
 ```
+Score(Pair(a, b)) = Score(a) + Score(b)
+Score(Pair(nil, x)) = Score(Pair(x, nil)) = Score(x)
+```
+
+- Leaf nodes below a threshold score are pruned out.
+- The weakest sub-tree is prioritized to grow with new nodes
+- Nodes leak score over time when not accessed
+
+### Sampling
+
+#### Seeding samples
+
+Samples fan-out to the DHT sub-trees with redundancy:
+```
+D = 8: fanout parameter, number of peers to distribute to (TODO: depends on network size)
+P = 2: prefix bits per bundle step
+```
+
+After building a data-blob:
+1. Extend to 2x size for error-recovery (only need 50% to recover)
+2. Hash samples to sample identities
+3. Bundle samples by ID prefix of `P` bits, e.g. `00`, `01`, `10`, `11`
+4. Send bundles to `D` random nodes in corresponding subtrees (`TALKREQ`).
+   Empty or single-sample bundles are not distributed further.
+
+When receiving a bundle with prefix `XX` (a `TALKREQ`):
+1. Validate the score of the sender is sufficient
+2. If the bundle (or a superset of it) was received before, ignore it (execute no more steps) (remember `min` and `max` ID for bound checks)
+   - TODO: if we want to track amount of repeated different seeders, we still need to validate the below conditions (extra cost)
+3. Reject if the sample is too old
+4. Reject if the bundle prefix does not match the local ID
+5. Reject if the bundle contents do not all match the prefix
+6. Verify each sample proof, reject if invalid
+7. Split the bundle into smaller bundles with next `P` bits: `X00`, `X01`, `X10`, `X11`
+8. Send smaller bundles to `D` random nodes in corresponding subtrees.
+   Empty or single-sample bundles are not distributed further.
+9. Increase score of bundle sender (TODO: )
+
+#### Serving samples
+
+On an incoming request for sample with ID inputs `t,x,i` (in a `TALKREQ`):
+1. Validate and update rate-limit of the requesting peer, reject if exceeded
+2. Reject if the requester has made the same request recently
+3. Slightly decrease requester score if the sample is unknown, and do not respond
+4. Increase the request count of the sample
+5. Serve the request: send the sample (through a `TALKRESP`)
+
+#### Retrieving samples
+
+1. Find the closest record in the tree to the sample ID
+2. Request the sample by sending the ID inputs `t,x,i` in a `TALKREQ`
+3. On response:
+   1. Verify proof of returned sample
+   2. Increase score of node
+4. On timeout:
+   1. Decrease score of node
+   2. Continue to step 2 with next closest node, give up after trying `R` closest nodes
+
+#### Tree Repairing
+
+During idle time, the tree is balanced through repairs:
+1. select the weakest sub-tree for each depth
+2. For each sub-tree, from deep to high up, run a DHT search for close nodes
+3. Filter the retrieved node records for `das` support
+4. Add nodes to the tree (do not overwrite existing leaf scores, do re-compute pair scores)
+
 
 
